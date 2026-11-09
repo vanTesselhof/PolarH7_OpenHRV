@@ -1,0 +1,54 @@
+# HRV Recorder für Polar H7
+
+Lokale Python-Anwendung für Linux Mint mit BLE-Empfang von Herzfrequenz und RR-Intervallen, CSV-Aufzeichnung, Ereignismarken, Live-Ansicht und transparenter Zeitbereichs-HRV-Auswertung. Der Polar H7 liefert hier kein Roh-EKG; die Anwendung zeichnet nur die verfügbaren Herzfrequenzdaten und RR-Intervalle auf.
+
+## Installation und Start
+
+Voraussetzung ist Python 3.12 und eine funktionsfähige BlueZ/Bluetooth-Installation. Aktiviere den Brustgurt durch Anfeuchten der Elektroden und lege ihn an. Im Projektordner:
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+`start.sh` erstellt `.venv`, installiert das Projekt und startet die Oberfläche. Manuell geht es mit `python3.12 -m venv .venv`, `source .venv/bin/activate`, `python -m pip install -e .` und `python -m hrv_recorder`. Für Tests: `python -m unittest discover -s tests -v`. Eine optionale `pytest`-Konfiguration ist ebenfalls enthalten. Anwendungslogs liegen lokal unter `~/.local/state/hrv-recorder/app.log` (maximal drei rotierte Sicherungen).
+
+Falls Python 3.12/venv noch nicht installiert ist, installiere die Pakete `python3.12`, `python3.12-venv` und `python3-pip` über die für deine Mint-Version vorgesehenen Paketquellen. Keine Bluetooth-Systemdienste müssen durch die Anwendung geändert werden.
+
+## Bedienung
+
+1. Trage eine pseudonymisierte Versuchsperson-ID und eine Session-ID ein. Der Standard-Speicherort ist `~/Documents/HRV_Messungen`.
+2. Suche BLE-Sensoren und wähle den Polar H7 aus; alternativ aktiviere den Simulationsmodus, um GUI und Speicherung ohne Sensor zu prüfen.
+3. Starte die Aufzeichnung. Bedingungen (Baseline, Music only, Music + Vibration, Rest) und freie Anmerkungen können während der Messung markiert werden. Das beendet oder pausiert den BLE-Empfang nicht.
+4. Stoppe die Aufzeichnung. Wähle für die Auswertung später `raw_rr.csv` über „CSV analysieren …“.
+
+Dateien liegen unter `<Speicherort>/<Versuchsperson>/<Session>/measurement_NNN/`. Vorhandene Messungen werden nicht überschrieben. Je Messung entstehen:
+
+- `raw_rr.csv`: eine Zeile je RR-Intervall; Rohwerte bleiben unangetastet.
+- `events.csv`: Zeitstempel und relative Zeiten von Bedingungswechseln/Notizen.
+- `metadata.json`: IDs, Sensor, Beginn/Ende, Zeitbezug und Datenrichtlinie.
+- `analysis_rr.csv`: Rohwert, Artefaktmarkierung und separat ausgewiesener Analysewert; markierte Intervalle sind leer und werden nicht ersetzt.
+- `hrv_results.csv`: Mittelwerte, SDNN, RMSSD, pNN50 und Artefaktanteil mit Methode und Qualitätsstatus.
+- `rr_plot.png`: RR-Verlauf mit markierten auffälligen Werten.
+
+### Spalten und Zeitstempel
+
+`raw_rr.csv` enthält `participant_id`, `session_id`, `measurement_number`, `sequence`, `received_timestamp_utc`, `relative_time_s`, `heartbeat_timestamp_utc`, `heartbeat_timestamp_basis`, `rr_ms`, `heart_rate_bpm`, `condition`, `quality_flag` und `source`. RR-Werte sind Millisekunden, Herzfrequenz ist BPM. Ein Benachrichtigungspaket mit mehreren Intervallen wird in Reihenfolge in mehrere Zeilen geschrieben. Alle Zeilen eines Pakets teilen den Empfangszeitpunkt. `heartbeat_timestamp_utc` wird aus den RR-Werten innerhalb des Pakets abgeleitet und ist ausdrücklich eine Schätzung, kein gemessener R-Zacken-Zeitpunkt. BleakHeart rundet die vom Sensor dekodierten RR-Werte aktuell auf ganze Millisekunden; die Anwendung gibt keine feinere Messauflösung vor. Die relative Zeit nutzt eine monotone Uhr und wird nicht von einer möglichen Korrektur der Systemuhr beeinflusst.
+
+`events.csv` enthält `event_number`, `timestamp_utc`, `relative_time_s`, `event` und `note`. In `metadata.json` steht zusätzlich, dass Rohdaten nicht geglättet, interpoliert oder korrigiert werden.
+
+## Analyse und Artefaktregeln
+
+Die Artefakterkennung markiert Intervalle außerhalb 300–2000 ms sowie lokale Abweichungen von mehr als 20 % oder 200 ms gegenüber dem Median von bis zu zwei Nachbarn auf jeder Seite. Das ist eine transparente Heuristik, keine klinische Diagnose. Sie löscht oder ersetzt nichts. Markierte Werte bleiben in `raw_rr.csv` und `analysis_rr.csv` nachvollziehbar, werden in `analysis_rr_ms` aber nicht für Kennwerte verwendet.
+
+Zeitbereichskennwerte werden nur ausgegeben, wenn mindestens 300 Sekunden Messdauer, 30 nicht markierte Intervalle und höchstens 20 % markierte Intervalle vorliegen. Die Fünf-Minuten-Grenze folgt der konventionellen stationären Kurzzeit-HRV-Aufzeichnungsempfehlung der ESC/NASPE-Task-Force ([Empfehlung](https://doi.org/10.1093/oxfordjournals.eurheartj.a014868)). Die Software prüft weder Stationarität noch Arrhythmien; ein bestandener Mindestdaten-Check ist keine Validitätsgarantie. Die Bedingungen müssen für die konkrete Studie beurteilt werden. Andernfalls bleiben HRV-Kennwertfelder leer und der Qualitätsstatus erläutert die Unterdrückung. SDNN ist die Stichproben-Standardabweichung der akzeptierten NN-Intervalle. RMSSD und pNN50 verwenden nur direkt benachbarte Paare, bei denen beide Intervalle akzeptiert sind. Der mittlere Puls ist der Mittelwert von `60000 / NN_ms`. Frequenzbasierte Kennwerte werden derzeit nicht berechnet.
+
+## Bluetooth-Fehlerbehebung und Validierung
+
+Prüfe, dass Bluetooth aktiv ist, der Gurt korrekt sitzt und nicht gleichzeitig von einem anderen Gerät verbunden wird. Starte die Sensorsuche erneut und halte den Gurt nahe am Rechner. Bei Verbindungsabbruch versucht die Anwendung mit wachsendem Abstand (bis 16 Sekunden) erneut zu verbinden; bereits geschriebene Daten bleiben erhalten. Wenn Herzfrequenz ankommt, aber keine RR-Werte, stoppe die Messung und prüfe Gurtkontakt und Sensor. Die Anwendung verwendet BleakHeart `HeartRate` mit der dokumentierten Callback-API und `unpack=False`, damit Paketempfangszeit und mehrere RR-Werte korrekt getrennt bleiben.
+
+Automatisierte Tests decken Speicherung mehrerer RR-Werte, Zeitstempel, Events, Kennwerte und Artefaktmarkierungen ab. Der Simulationsmodus prüft die lokale Oberfläche und Dateiausgabe. Eine echte Verbindung, Reichweite, Wiederverbindung mit dem konkreten Rechner sowie RR-Empfang vom Polar H7 müssen zusätzlich mit Hardware validiert werden. BleakHeart nennt den H10 als primär getesteten Sensor; die Heart-Rate-Service-API ist standardbasiert, dennoch ersetzt der Simulationsmodus keinen H7-Test.
+
+## Projektaufbau
+
+`src/hrv_recorder/` enthält BLE-Verbindung, Sitzungsaufzeichnung, Analyse und GUI; `tests/` enthält automatisierte Tests. Sensible Messdaten und virtuelle Umgebungen sind per `.gitignore` vom Commit ausgeschlossen. Commit-Betreffzeilen kurz und imperativ formulieren.

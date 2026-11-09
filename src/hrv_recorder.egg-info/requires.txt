@@ -1,0 +1,10 @@
+bleak
+bleakheart
+PySide6
+pyqtgraph
+numpy
+pandas
+matplotlib
+
+[test]
+pytest
